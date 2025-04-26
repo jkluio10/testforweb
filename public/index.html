@@ -16,7 +16,7 @@
   <script type="text/babel">
     // 配置AWS SDK（假設已通過IAM角色或Cognito設置憑證）
     AWS.config.update({
-      region: 'us-east-1', // 替換為您的S3區域
+      region: 'us-west-2', // 替換為您的S3區域
     });
 
     function RecorderApp() {
@@ -77,7 +77,7 @@
 
         try {
           await s3.upload({
-            Bucket: 'my-audio-bucket', // 替換為您的S3儲存桶名稱
+            Bucket: 'ai-sales-voice-bucket', // 替換為您的S3儲存桶名稱
             Key: fileName,
             Body: audioBlob,
             ContentType: 'audio/wav',
