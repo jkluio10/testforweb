@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Recorder with Amplify Upload</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.4/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 加上 Amplify Core 與 Storage -->
+  <script src="https://cdn.jsdelivr.net/npm/aws-amplify@5.0.13/dist/aws-amplify.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { Amplify, Storage } = window.aws_amplify;
+
+    // 初始化 Amplify 設定 (要用你的 amplify configure 出來的資訊)
+    Amplify.configure({
+      Auth: {
+        // optional，如果你有 Cognito
+        identityPoolId: '你的 Identity Pool ID',
+        region: 'us-west-2',
+      },
+      Storage: {
+        AWSS3: {
+          bucket: 'ai-sales-voice-bucket ',
+          region: 'us-west-2',
+        }
+      }
+    });
+
+    function AudioRecorder() {
+      const [isRecording, setIsRecording] = React.useState(false);
+      const [audioURL, setAudioURL] = React.useState('');
+      const [mediaRecorder, setMediaRecorder] = React.useState(null);
+      const [audioBlob, setAudioBlob] = React.useState(null);
+      const [isUploading, setIsUploading] = React.useState(false);
+
+      const startRecording = async () => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const recorder = new MediaRecorder(stream);
+          const chunks = [];
+
+          recorder.ondataavailable = (e) => {
+            chunks.push(e.data);
+          };
+
+          recorder.onstop = async () => {
+            const blob = new Blob(chunks, { type: 'audio/webm' });
+            const url = URL.createObjectURL(blob);
+            setAudioURL(url);
+            setAudioBlob(blob);
+            stream.getTracks().forEach(track => track.stop());
+
+            // 自動上傳到 Amplify Storage (S3)
+            setIsUploading(true);
+            const fileName = `recording-${Date.now()}.webm`;
+
+            try {
+              await Storage.put(fileName, blob, {
+                contentType: 'audio/webm',
+                level: 'public', // public: 任何人可讀 / protected: 自己和 admin / private: 只有自己
+              });
+              alert('音訊已成功上傳到 Amplify Storage！');
+            } catch (err) {
+              console.error('Error uploading to Amplify Storage:', err);
+              alert('上傳失敗，請檢查 Storage 設定');
+            } finally {
+              setIsUploading(false);
+            }
+          };
+
+          recorder.start();
+          setMediaRecorder(recorder);
+          setIsRecording(true);
+        } catch (err) {
+          console.error('Error accessing microphone:', err);
+          alert('無法訪問麥克風，請檢查權限');
+        }
+      };
+
+      const stopRecording = () => {
+        if (mediaRecorder) {
+          mediaRecorder.stop();
+          setIsRecording(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+          <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
+            <h1 className="text-2xl font-bold mb-6 text-center">音訊錄製器</h1>
+            
+            <div className="flex justify-center space-x-4 mb-6">
+              <button
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={isUploading}
+                className={`px-4 py-2 rounded-lg text-white font-semibold ${
+                  isUploading
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : isRecording
+                    ? 'bg-red-500 hover:bg-red-600'
+                    : 'bg-blue-500 hover:bg-blue-600'
+                }`}
+              >
+                {isUploading ? '上傳中...' : isRecording ? '停止錄製' : '開始錄製'}
+              </button>
+            </div>
+
+            {audioURL && (
+              <div className="mt-4">
+                <audio controls src={audioURL} className="w-full" />
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<AudioRecorder />);
+  </script>
+</body>
+</html>
