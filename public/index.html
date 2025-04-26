@@ -8,28 +8,30 @@
   <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.4/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- 加上 Amplify Core 與 Storage -->
-  <script src="https://cdn.jsdelivr.net/npm/aws-amplify@5.0.13/dist/aws-amplify.min.js"></script>
+  <!-- 使用最新版 Amplify -->
+  <script src="https://cdn.jsdelivr.net/npm/aws-amplify@6.0.5/dist/aws-amplify.min.js"></script>
 </head>
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const Amplify = window.aws_amplify.Amplify;
-    const Storage = window.aws_amplify.Storage;
+    // 確保 Amplify 正確載入
+    const { Amplify, Storage } = window.Amplify;
 
-    // 初始化 Amplify 設定 (要用你的 amplify configure 出來的資訊)
+    // 初始化 Amplify 設定
     Amplify.configure({
       Auth: {
-        // optional，如果你有 Cognito
-        identityPoolId: 'us-west-2:821bca57-d54c-4ee5-897c-d32481831cb0',
+        identityPoolId: 'us-west-2:821bca57-d54c-4ee5-897c-d32481831cb0', // 確保此 ID 正確
         region: 'us-west-2',
+        // 如果使用認證用戶，需添加以下配置
+        // userPoolId: 'your-user-pool-id',
+        // userPoolWebClientId: 'your-client-id',
       },
       Storage: {
         AWSS3: {
-          bucket: 'ai-sales-voice-bucket',
+          bucket: 'ai-sales-voice-bucket', // 移除空格
           region: 'us-west-2',
-        }
-      }
+        },
+      },
     });
 
     function AudioRecorder() {
@@ -42,53 +44,71 @@
       const startRecording = async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const recorder = new MediaRecorder(stream);
+          // 檢查瀏覽器支援的 MIME 類型
+          const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+          const recorder = new MediaRecorder(stream, { mimeType });
           const chunks = [];
 
           recorder.ondataavailable = (e) => {
-            chunks.push(e.data);
+            if (e.data.size > 0) {
+              chunks.push(e.data);
+            }
           };
 
           recorder.onstop = async () => {
-            const blob = new Blob(chunks, { type: 'audio/webm' });
+            const blob = new Blob(chunks, { type: mimeType });
             const url = URL.createObjectURL(blob);
             setAudioURL(url);
             setAudioBlob(blob);
-            stream.getTracks().forEach(track => track.stop());
+            stream.getTracks().forEach((track) => track.stop());
 
-            // 自動上傳到 Amplify Storage (S3)
+            // 自動上傳到 S3
             setIsUploading(true);
-            const fileName = `recording-${Date.now()}.webm`;
+            const fileName = `recording-${Date.now()}.${mimeType.split('/')[1]}`;
 
             try {
-              await Storage.put(fileName, blob, {
-                contentType: 'audio/webm',
-                level: 'public', // public: 任何人可讀 / protected: 自己和 admin / private: 只有自己
+              const result = await Storage.put(fileName, blob, {
+                contentType: mimeType,
+                level: 'public', // 確保 S3 儲存桶允許公開訪問
               });
-              alert('音訊已成功上傳到 Amplify Storage！');
+              alert(`音訊已成功上傳到 S3：${result.key}`);
             } catch (err) {
-              console.error('Error uploading to Amplify Storage:', err);
-              alert('上傳失敗，請檢查 Storage 設定');
+              console.error('上傳錯誤詳細資訊:', err);
+              alert(`上傳失敗：${err.message || '請檢查 Amplify 設定與 S3 權限'}`);
             } finally {
               setIsUploading(false);
             }
+          };
+
+          recorder.onerror = (err) => {
+            console.error('錄製錯誤:', err);
+            alert('錄製過程中發生錯誤');
           };
 
           recorder.start();
           setMediaRecorder(recorder);
           setIsRecording(true);
         } catch (err) {
-          console.error('Error accessing microphone:', err);
-          alert('無法訪問麥克風，請檢查權限');
+          console.error('麥克風訪問錯誤:', err);
+          alert('無法訪問麥克風，請檢查權限或確保使用 HTTPS');
         }
       };
 
       const stopRecording = () => {
-        if (mediaRecorder) {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
           mediaRecorder.stop();
           setIsRecording(false);
         }
       };
+
+      // 清理副作用，避免記憶體洩漏
+      React.useEffect(() => {
+        return () => {
+          if (audioURL) {
+            URL.revokeObjectURL(audioURL);
+          }
+        };
+      }, [audioURL]);
 
       return (
         <div className="min-h-screen bg-gray-100 flex items-center justify-center">
