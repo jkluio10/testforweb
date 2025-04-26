@@ -14,7 +14,8 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { Amplify, Storage } = window.aws_amplify;
+    const Amplify = window.aws_amplify.Amplify;
+    const Storage = window.aws_amplify.Storage;
 
     // 初始化 Amplify 設定 (要用你的 amplify configure 出來的資訊)
     Amplify.configure({
