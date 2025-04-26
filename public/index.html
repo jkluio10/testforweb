@@ -1,149 +1,129 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Audio Recorder with Amplify Upload</title>
-  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.4/babel.min.js"></script>
+  <title>錄音並上傳到S3</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
+  <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1468.0.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/aws-amplify@6.0.5/dist/aws-amplify.min.js"></script>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="text/babel">
-    const { Amplify, Storage, Auth } = window.Amplify;
+  <div id="root" class="min-h-screen bg-gray-100 flex items-center justify-center"></div>
 
-    // 初始化 Amplify 設定
-    Amplify.configure({
-      Auth: {
-        identityPoolId: 'us-west-2:821bca57-d54c-4ee5-897c-d32481831cb0',
-        region: 'us-west-2',
-        // 如果使用認證用戶，取消註解以下行
-        // userPoolId: 'your-user-pool-id',
-        // userPoolWebClientId: 'your-client-id',
-      },
-      Storage: {
-        AWSS3: {
-          bucket: 'ai-sales-voice-bucket',
-          region: 'us-west-2',
-        },
-      },
+  <script type="text/babel">
+    // 配置AWS SDK（假設已通過IAM角色或Cognito設置憑證）
+    AWS.config.update({
+      region: 'us-east-1', // 替換為您的S3區域
     });
 
-    function AudioRecorder() {
+    function RecorderApp() {
       const [isRecording, setIsRecording] = React.useState(false);
-      const [audioURL, setAudioURL] = React.useState('');
-      const [mediaRecorder, setMediaRecorder] = React.useState(null);
+      const [audioUrl, setAudioUrl] = React.useState(null);
       const [audioBlob, setAudioBlob] = React.useState(null);
-      const [isUploading, setIsUploading] = React.useState(false);
+      const [status, setStatus] = React.useState('');
+      const mediaRecorderRef = React.useRef(null);
+      const audioChunksRef = React.useRef([]);
 
-      // 初始化時檢查 Cognito 憑證
-      React.useEffect(() => {
-        Auth.currentCredentials()
-          .then((credentials) => console.log('Cognito 憑證初始化成功:', credentials))
-          .catch((err) => console.error('Cognito 憑證初始化失敗:', err));
-      }, []);
-
+      // 開始錄音
       const startRecording = async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
-          const recorder = new MediaRecorder(stream, { mimeType });
-          const chunks = [];
+          mediaRecorderRef.current = new MediaRecorder(stream);
+          audioChunksRef.current = [];
 
-          recorder.ondataavailable = (e) => {
-            if (e.data.size > 0) {
-              chunks.push(e.data);
+          mediaRecorderRef.current.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              audioChunksRef.current.push(event.data);
             }
           };
 
-          recorder.onstop = async () => {
-            const blob = new Blob(chunks, { type: mimeType });
-            const url = URL.createObjectURL(blob);
-            setAudioURL(url);
-            setAudioBlob(blob);
-            stream.getTracks().forEach((track) => track.stop());
-
-            // 上傳到 S3，使用 private 級別
-            setIsUploading(true);
-            const fileName = `recording-${Date.now()}.${mimeType.split('/')[1]}`;
-
-            try {
-              const result = await Storage.put(fileName, blob, {
-                contentType: mimeType,
-                level: 'private', // 改為 private
-              });
-              alert(`音訊已成功上傳到 S3（private）：${result.key}`);
-            } catch (err) {
-              console.error('上傳錯誤詳細資訊:', err);
-              alert(`上傳失敗：${err.message || '請檢查 Cognito 憑證與 S3 權限'}`);
-            } finally {
-              setIsUploading(false);
-            }
+          mediaRecorderRef.current.onstop = () => {
+            const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            setAudioBlob(audioBlob);
+            setAudioUrl(audioUrl);
+            setStatus('錄音完成，可播放或上傳');
           };
 
-          recorder.onerror = (err) => {
-            console.error('錄製錯誤:', err);
-            alert('錄製過程中發生錯誤');
-          };
-
-          recorder.start();
-          setMediaRecorder(recorder);
+          mediaRecorderRef.current.start();
           setIsRecording(true);
+          setStatus('正在錄音...');
         } catch (err) {
-          console.error('麥克風訪問錯誤:', err);
-          alert('無法訪問麥克風，請檢查權限或確保使用 HTTPS');
+          setStatus('無法存取麥克風：' + err.message);
         }
       };
 
+      // 停止錄音
       const stopRecording = () => {
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-          mediaRecorder.stop();
+        if (mediaRecorderRef.current) {
+          mediaRecorderRef.current.stop();
           setIsRecording(false);
         }
       };
 
-      React.useEffect(() => {
-        return () => {
-          if (audioURL) {
-            URL.revokeObjectURL(audioURL);
-          }
-        };
-      }, [audioURL]);
+      // 上傳到S3
+      const uploadToS3 = async () => {
+        if (!audioBlob) {
+          setStatus('請先錄音');
+          return;
+        }
+
+        setStatus('正在上傳...');
+        const s3 = new AWS.S3();
+        const fileName = `recording-${Date.now()}.wav`;
+
+        try {
+          await s3.upload({
+            Bucket: 'my-audio-bucket', // 替換為您的S3儲存桶名稱
+            Key: fileName,
+            Body: audioBlob,
+            ContentType: 'audio/wav',
+          }).promise();
+
+          setStatus(`上傳成功：${fileName}`);
+          setAudioBlob(null);
+          setAudioUrl(null);
+        } catch (err) {
+          setStatus('上傳失敗：' + err.message);
+        }
+      };
 
       return (
-        <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-          <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
-            <h1 className="text-2xl font-bold mb-6 text-center">音訊錄製器</h1>
-            <div className="flex justify-center space-x-4 mb-6">
+        <div className="bg-white p-8 rounded-lg shadow-lg max-w-md w-full">
+          <h1 className="text-2xl font-bold mb-6 text-center">錄音並上傳到S3</h1>
+          <div className="flex justify-center space-x-4 mb-6">
+            <button
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`px-4 py-2 rounded-lg text-white font-semibold ${
+                isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'
+              }`}
+            >
+              {isRecording ? '停止錄音' : '開始錄音'}
+            </button>
+            {audioUrl && (
               <button
-                onClick={isRecording ? stopRecording : startRecording}
-                disabled={isUploading}
-                className={`px-4 py-2 rounded-lg text-white font-semibold ${
-                  isUploading
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : isRecording
-                    ? 'bg-red-500 hover:bg-red-600'
-                    : 'bg-blue-500 hover:bg-blue-600'
-                }`}
+                onClick={uploadToS3}
+                className="px-4 py-2 bg-green-500 hover:bg-green-600 rounded-lg text-white font-semibold"
               >
-                {isUploading ? '上傳中...' : isRecording ? '停止錄製' : '開始錄製'}
+                上傳到S3
               </button>
-            </div>
-            {audioURL && (
-              <div className="mt-4">
-                <audio controls src={audioURL} className="w-full" />
-              </div>
             )}
           </div>
+          {audioUrl && (
+            <div className="mb-6">
+              <audio controls src={audioUrl} className="w-full" />
+            </div>
+          )}
+          <p className="text-gray-600 text-center">{status}</p>
         </div>
       );
     }
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<AudioRecorder />);
+    // 渲染應用程式
+    ReactDOM.render(<RecorderApp />, document.getElementById('root'));
   </script>
 </body>
 </html>
