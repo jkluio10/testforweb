@@ -8,27 +8,25 @@
   <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.4/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- 使用最新版 Amplify -->
   <script src="https://cdn.jsdelivr.net/npm/aws-amplify@6.0.5/dist/aws-amplify.min.js"></script>
 </head>
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    // 確保 Amplify 正確載入
-    const { Amplify, Storage } = window.Amplify;
+    const { Amplify, Storage, Auth } = window.Amplify;
 
     // 初始化 Amplify 設定
     Amplify.configure({
       Auth: {
-        identityPoolId: 'us-west-2:821bca57-d54c-4ee5-897c-d32481831cb0', // 確保此 ID 正確
+        identityPoolId: 'us-west-2:821bca57-d54c-4ee5-897c-d32481831cb0',
         region: 'us-west-2',
-        // 如果使用認證用戶，需添加以下配置
+        // 如果使用認證用戶，取消註解以下行
         // userPoolId: 'your-user-pool-id',
         // userPoolWebClientId: 'your-client-id',
       },
       Storage: {
         AWSS3: {
-          bucket: 'ai-sales-voice-bucket', // 移除空格
+          bucket: 'ai-sales-voice-bucket',
           region: 'us-west-2',
         },
       },
@@ -41,10 +39,16 @@
       const [audioBlob, setAudioBlob] = React.useState(null);
       const [isUploading, setIsUploading] = React.useState(false);
 
+      // 初始化時檢查 Cognito 憑證
+      React.useEffect(() => {
+        Auth.currentCredentials()
+          .then((credentials) => console.log('Cognito 憑證初始化成功:', credentials))
+          .catch((err) => console.error('Cognito 憑證初始化失敗:', err));
+      }, []);
+
       const startRecording = async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          // 檢查瀏覽器支援的 MIME 類型
           const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
           const recorder = new MediaRecorder(stream, { mimeType });
           const chunks = [];
@@ -62,19 +66,19 @@
             setAudioBlob(blob);
             stream.getTracks().forEach((track) => track.stop());
 
-            // 自動上傳到 S3
+            // 上傳到 S3，使用 private 級別
             setIsUploading(true);
             const fileName = `recording-${Date.now()}.${mimeType.split('/')[1]}`;
 
             try {
               const result = await Storage.put(fileName, blob, {
                 contentType: mimeType,
-                level: 'public', // 確保 S3 儲存桶允許公開訪問
+                level: 'private', // 改為 private
               });
-              alert(`音訊已成功上傳到 S3：${result.key}`);
+              alert(`音訊已成功上傳到 S3（private）：${result.key}`);
             } catch (err) {
               console.error('上傳錯誤詳細資訊:', err);
-              alert(`上傳失敗：${err.message || '請檢查 Amplify 設定與 S3 權限'}`);
+              alert(`上傳失敗：${err.message || '請檢查 Cognito 憑證與 S3 權限'}`);
             } finally {
               setIsUploading(false);
             }
@@ -101,7 +105,6 @@
         }
       };
 
-      // 清理副作用，避免記憶體洩漏
       React.useEffect(() => {
         return () => {
           if (audioURL) {
@@ -114,7 +117,6 @@
         <div className="min-h-screen bg-gray-100 flex items-center justify-center">
           <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
             <h1 className="text-2xl font-bold mb-6 text-center">音訊錄製器</h1>
-            
             <div className="flex justify-center space-x-4 mb-6">
               <button
                 onClick={isRecording ? stopRecording : startRecording}
@@ -130,7 +132,6 @@
                 {isUploading ? '上傳中...' : isRecording ? '停止錄製' : '開始錄製'}
               </button>
             </div>
-
             {audioURL && (
               <div className="mt-4">
                 <audio controls src={audioURL} className="w-full" />
